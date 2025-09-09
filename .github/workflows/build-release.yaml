@@ -1,0 +1,80 @@
+name: Build macOS app and create release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch or tag) to build"
+        required: false
+        default: main
+      prerelease:
+        description: "Mark GitHub release as pre-release (tags only)"
+        type: boolean
+        required: false
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-13
+            arch: x86_64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install pyinstaller
+
+      - name: PyInstaller build
+        run: |
+          APP_NAME="Music App Server"
+          pyinstaller --noconfirm --windowed --name "$APP_NAME" \
+            --add-data "icon.icns:." --icon icon.icns \
+            --osx-bundle-identifier com.csilvertooth.musicServer \
+            music_app_server.py
+
+      - name: Prepare artifact (.zip)
+        run: |
+          APP_NAME="Music App Server"
+          cd dist
+          zip -r "Music-App-Server-macos-${{ matrix.arch }}.zip" "$APP_NAME.app"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Music-App-Server-macos-${{ matrix.arch }}
+          path: dist/Music-App-Server-macos-${{ matrix.arch }}.zip
+
+      - name: Create/Update GitHub Release (on tags)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Music-App-Server-macos-${{ matrix.arch }}.zip
+          prerelease: ${{ inputs.prerelease == 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
